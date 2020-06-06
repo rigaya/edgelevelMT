@@ -91,6 +91,26 @@ static __forceinline __m256i get_y_from_pixelyc(BYTE *src) {
     return y2;
 }
 
+template<bool aligned_store>
+static void __forceinline insert_y_yc48(BYTE *dst, const BYTE *src, __m256i yY) {
+
+    __m256i y0 = _mm256_set_m128i(_mm_loadu_si128((__m128i *)(src + 48)), _mm_loadu_si128((__m128i *)(src +  0))); // 384,   0
+    __m256i y1 = _mm256_set_m128i(_mm_loadu_si128((__m128i *)(src + 64)), _mm_loadu_si128((__m128i *)(src + 16))); // 512, 128
+    __m256i y2 = _mm256_set_m128i(_mm_loadu_si128((__m128i *)(src + 80)), _mm_loadu_si128((__m128i *)(src + 32))); // 768, 256
+
+    const int MASK_INT = 0x40 + 0x08 + 0x01;
+    yY = _mm256_shuffle_epi8(yY, SUFFLE_YCP_Y);
+    y0 = _mm256_blend_epi16(y0, yY, MASK_INT);
+    y1 = _mm256_blend_epi16(y1, yY, MASK_INT<<1);
+    y2 = _mm256_blend_epi16(y2, yY, (MASK_INT<<2) & 0xFF);
+
+#define _mm256_store_switch_si256(ptr, xmm) ((aligned_store) ? _mm256_stream_si256((__m256i *)(ptr), (xmm)) : _mm256_storeu_si256((__m256i *)(ptr), (xmm)))
+    _mm256_store_switch_si256((__m256i *)(dst +  0), _mm256_permute2x128_si256(y0, y1, (0x02<<4)+0x00)); // 128,   0
+    _mm256_store_switch_si256((__m256i *)(dst + 32), _mm256_blend_epi32(       y0, y2, (0x00<<4)+0x0f)); // 384, 256
+    _mm256_store_switch_si256((__m256i *)(dst + 64), _mm256_permute2x128_si256(y1, y2, (0x03<<4)+0x01)); // 768, 512
+#undef _mm256_store_switch_si256
+}
+
 static __forceinline __m256i get_previous_2_y_pixels(BYTE *src) {
     static const _declspec(align(32)) BYTE SHUFFLE_LAST_2_Y_PIXELS[] = {
         0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
@@ -101,101 +121,95 @@ static __forceinline __m256i get_previous_2_y_pixels(BYTE *src) {
     return y0;
 }
 
+static __forceinline __m256i edgelevel_avx2_16(
+    const __m256i &ySrc1YM2, const __m256i &ySrc1YM1,
+    const __m256i &ySrc0, const __m256i &ySrc1, const __m256i &ySrc2,
+    const __m256i &ySrc1YP1, const __m256i &ySrc1YP2,
+    const __m256i &yThreshold, const __m256i &yStrength, const __m256i &yWc, const __m256i &yBc) {
+    //周辺近傍の最大と最小を縦方向・横方向に求める
+    __m256i yVmax, yVmin;
+    yVmax = _mm256_max_epi16(ySrc1, ySrc1YM2);
+    yVmin = _mm256_min_epi16(ySrc1, ySrc1YM2);
+    yVmax = _mm256_max_epi16(yVmax, ySrc1YM1);
+    yVmin = _mm256_min_epi16(yVmin, ySrc1YM1);
+    yVmax = _mm256_max_epi16(yVmax, ySrc1YP1);
+    yVmin = _mm256_min_epi16(yVmin, ySrc1YP1);
+    yVmax = _mm256_max_epi16(yVmax, ySrc1YP2);
+    yVmin = _mm256_min_epi16(yVmin, ySrc1YP2);
+
+    __m256i ySrc1XM2 = _mm256_alignr256_epi8(ySrc1, ySrc0, 32-4);
+    __m256i ySrc1XM1 = _mm256_alignr256_epi8(ySrc1, ySrc0, 32-2);
+    __m256i ySrc1XP1 = _mm256_alignr256_epi8(ySrc2, ySrc1, 2);
+    __m256i ySrc1XP2 = _mm256_alignr256_epi8(ySrc2, ySrc1, 4);
+    __m256i yMax, yMin;
+    yMax  = _mm256_max_epi16(ySrc1, ySrc1XM2);
+    yMin  = _mm256_min_epi16(ySrc1, ySrc1XM2);
+    yMax  = _mm256_max_epi16(yMax, ySrc1XM1);
+    yMin  = _mm256_min_epi16(yMin, ySrc1XM1);
+    yMax  = _mm256_max_epi16(yMax, ySrc1XP1);
+    yMin  = _mm256_min_epi16(yMin, ySrc1XP1);
+    yMax  = _mm256_max_epi16(yMax, ySrc1XP2);
+    yMin  = _mm256_min_epi16(yMin, ySrc1XP2);
+
+    //if (max - min < vmax - vmin) { max = vmax, min = vmin; }
+    __m256i yMask = _mm256_cmpgt_epi16(_mm256_sub_epi16(yVmax, yVmin), _mm256_sub_epi16(yMax, yMin));
+    yMax  = _mm256_blendv_epi8(yMax, yVmax, yMask);
+    yMin  = _mm256_blendv_epi8(yMin, yVmin, yMask);
+
+    //avg = (min + max) >> 1;
+    __m256i yAvg = _mm256_srai_epi16(_mm256_add_epi16(yMax, yMin), 1);
+
+    //if (max - min > thrs)
+    yMask = _mm256_cmpgt_epi16(_mm256_sub_epi16(yMax, yMin), yThreshold);
+
+    //if (src->y == max) max += wc * 2;
+    //else max += wc;
+    __m256i yMaskMax = _mm256_cmpeq_epi16(ySrc1, yMax);
+    yMax  = _mm256_add_epi16(yMax, yWc);
+    yMax  = _mm256_add_epi16(yMax, _mm256_and_si256(yWc, yMaskMax));
+
+    //if (src->y == min) min -= bc * 2;
+    //else  min -= bc;
+    __m256i yMaskMin = _mm256_cmpeq_epi16(ySrc1, yMin);
+    yMin  = _mm256_sub_epi16(yMin, yBc);
+    yMin  = _mm256_sub_epi16(yMin, _mm256_and_si256(yBc, yMaskMin));
+
+    //dst->y = (std::min)( (std::max)( short( src->y + ((src->y - avg) * str >> 4) ), min ), max );
+    __m256i y0, y1;
+    y1    = _mm256_sub_epi16(yAvg, ySrc1);
+    y0    = _mm256_unpacklo_epi16(y1, y1);
+    y1    = _mm256_unpackhi_epi16(y1, y1);
+    y0    = _mm256_madd_epi16(y0, yStrength);
+    y1    = _mm256_madd_epi16(y1, yStrength);
+    y0    = _mm256_srai_epi32(y0, 4);
+    y1    = _mm256_srai_epi32(y1, 4);
+    y0    = _mm256_packs_epi32(y0, y1);
+    y0    = _mm256_add_epi16(y0, ySrc1);
+    y0    = _mm256_max_epi16(y0, yMin);
+    y0    = _mm256_min_epi16(y0, yMax);
+
+    return _mm256_blendv_epi8(ySrc1, y0, yMask);
+}
+
 template<bool aligned_store>
 static __forceinline void multi_thread_func_avx2_line(BYTE *dst, BYTE *src, int w, int max_w,
     const __m256i& yThreshold, const __m256i& yStrength, const __m256i& yWc, const __m256i& yBc) {
-    __m256i y0, y1, y2, ySrc0, ySrc1, ySrc2, yTemp;
-    __m256i yY, yVmin, yVmax, yMin, yMax, yMask, yAvg;
-    ySrc0 = get_previous_2_y_pixels(src);
-    ySrc1 = get_y_from_pixelyc(src);
+    __m256i ySrc0 = get_previous_2_y_pixels(src);
+    __m256i ySrc1 = get_y_from_pixelyc(src);
     const BYTE *src_fin = src + w * PIXELYC_SIZE;
     for ( ; src < src_fin; src += 96, dst += 96) {
         //周辺近傍の最大と最小を縦方向・横方向に求める
-        yVmax = get_y_from_pixelyc(src + (-2*max_w) * PIXELYC_SIZE);
-        yVmin = yVmax;
-        yTemp = get_y_from_pixelyc(src + (-1*max_w) * PIXELYC_SIZE);
-        yVmax = _mm256_max_epi16(yVmax, yTemp);
-        yVmin = _mm256_min_epi16(yVmin, yTemp);
-        yVmax = _mm256_max_epi16(yVmax, ySrc1);
-        yVmin = _mm256_min_epi16(yVmin, ySrc1);
-        yTemp = get_y_from_pixelyc(src + (1*max_w) * PIXELYC_SIZE);
-        yVmax = _mm256_max_epi16(yVmax, yTemp);
-        yVmin = _mm256_min_epi16(yVmin, yTemp);
-        yTemp = get_y_from_pixelyc(src + (2*max_w) * PIXELYC_SIZE);
-        yVmax = _mm256_max_epi16(yVmax, yTemp);
-        yVmin = _mm256_min_epi16(yVmin, yTemp);
-        ySrc2 = get_y_from_pixelyc(src + 16 * PIXELYC_SIZE);
-        yMax  = ySrc1;
-        yMin  = yMax;
-        yTemp = _mm256_alignr256_epi8(ySrc1, ySrc0, 32-4);
-        yMax  = _mm256_max_epi16(yMax, yTemp);
-        yMin  = _mm256_min_epi16(yMin, yTemp);
-        yTemp = _mm256_alignr256_epi8(ySrc1, ySrc0, 32-2);
-        yMax  = _mm256_max_epi16(yMax, yTemp);
-        yMin  = _mm256_min_epi16(yMin, yTemp);
-        yTemp = _mm256_alignr256_epi8(ySrc2, ySrc1, 2);
-        yMax  = _mm256_max_epi16(yMax, yTemp);
-        yMin  = _mm256_min_epi16(yMin, yTemp);
-        yTemp = _mm256_alignr256_epi8(ySrc2, ySrc1, 4);
-        yMax  = _mm256_max_epi16(yMax, yTemp);
-        yMin  = _mm256_min_epi16(yMin, yTemp);
+        __m256i ySrc1YM2 = get_y_from_pixelyc(src + (-2*max_w) * PIXELYC_SIZE);
+        __m256i ySrc1YM1 = get_y_from_pixelyc(src + (-1*max_w) * PIXELYC_SIZE);
+        __m256i ySrc1YP1 = get_y_from_pixelyc(src + ( 1*max_w) * PIXELYC_SIZE);
+        __m256i ySrc1YP2 = get_y_from_pixelyc(src + ( 2*max_w) * PIXELYC_SIZE);
+        __m256i ySrc2    = get_y_from_pixelyc(src +         16 * PIXELYC_SIZE);
+
+        __m256i yY = edgelevel_avx2_16(ySrc1YM2, ySrc1YM1, ySrc0, ySrc1, ySrc2, ySrc1YP1, ySrc1YP2, yThreshold, yStrength, yWc, yBc);
         ySrc0 = ySrc1;
         ySrc1 = ySrc2;
 
-        //if (max - min < vmax - vmin) { max = vmax, min = vmin; }
-        yMask = _mm256_cmpgt_epi16(_mm256_sub_epi16(yVmax, yVmin), _mm256_sub_epi16(yMax, yMin));
-        yMax  = _mm256_blendv_epi8(yMax, yVmax, yMask);
-        yMin  = _mm256_blendv_epi8(yMin, yVmin, yMask);
-
-        //avg = (min + max) >> 1;
-        yAvg  = _mm256_add_epi16(yMax, yMin);
-        yAvg  = _mm256_srai_epi16(yAvg, 1);
-
-        //if (max - min > thrs)
-        yMask = _mm256_cmpgt_epi16(_mm256_sub_epi16(yMax, yMin), yThreshold);
-
-        //if (src->y == max) max += wc * 2;
-        //else max += wc;
-        y1    = _mm256_cmpeq_epi16(ySrc0, yMax);
-        yMax  = _mm256_add_epi16(yMax, yWc);
-        yMax  = _mm256_add_epi16(yMax, _mm256_and_si256(yWc, y1));
-
-        //if (src->y == min) min -= bc * 2;
-        //else  min -= bc;
-        y1    = _mm256_cmpeq_epi16(ySrc0, yMin);
-        yMin  = _mm256_sub_epi16(yMin, yBc);
-        yMin  = _mm256_sub_epi16(yMin, _mm256_and_si256(yBc, y1));
-
-        //dst->y = (std::min)( (std::max)( short( src->y + ((src->y - avg) * str >> 4) ), min ), max );
-        y1    = _mm256_sub_epi16(yAvg, ySrc0);
-        y0    = _mm256_unpacklo_epi16(y1, y1);
-        y1    = _mm256_unpackhi_epi16(y1, y1);
-        y0    = _mm256_madd_epi16(y0, yStrength);
-        y1    = _mm256_madd_epi16(y1, yStrength);
-        y0    = _mm256_srai_epi32(y0, 4);
-        y1    = _mm256_srai_epi32(y1, 4);
-        y0    = _mm256_packs_epi32(y0, y1);
-        y0    = _mm256_add_epi16(y0, ySrc0);
-        y0    = _mm256_max_epi16(y0, yMin);
-        y0    = _mm256_min_epi16(y0, yMax);
-
-        yY    = _mm256_blendv_epi8(ySrc0, y0, yMask);
-
-        y0 = _mm256_set_m128i(_mm_loadu_si128((__m128i *)(src + 48)), _mm_loadu_si128((__m128i *)(src +  0))); // 384,   0
-        y1 = _mm256_set_m128i(_mm_loadu_si128((__m128i *)(src + 64)), _mm_loadu_si128((__m128i *)(src + 16))); // 512, 128
-        y2 = _mm256_set_m128i(_mm_loadu_si128((__m128i *)(src + 80)), _mm_loadu_si128((__m128i *)(src + 32))); // 768, 256
-
-        const int MASK_INT = 0x40 + 0x08 + 0x01;
-        yY = _mm256_shuffle_epi8(yY, SUFFLE_YCP_Y);
-        y0 = _mm256_blend_epi16(y0, yY, MASK_INT);
-        y1 = _mm256_blend_epi16(y1, yY, MASK_INT<<1);
-        y2 = _mm256_blend_epi16(y2, yY, (MASK_INT<<2) & 0xFF);
-
-#define _mm256_store_switch_si256(ptr, xmm) ((aligned_store) ? _mm256_stream_si256((__m256i *)(ptr), (xmm)) : _mm256_storeu_si256((__m256i *)(ptr), (xmm)))
-        _mm256_store_switch_si256((__m256i *)(dst +  0), _mm256_permute2x128_si256(y0, y1, (0x02<<4)+0x00)); // 128,   0
-        _mm256_store_switch_si256((__m256i *)(dst + 32), _mm256_blend_epi32(       y0, y2, (0x00<<4)+0x0f)); // 384, 256
-        _mm256_store_switch_si256((__m256i *)(dst + 64), _mm256_permute2x128_si256(y1, y2, (0x03<<4)+0x01)); // 768, 512
-#undef _mm256_store_switch_si256
+        insert_y_yc48<aligned_store>(dst, src, yY);
     }
 }
 

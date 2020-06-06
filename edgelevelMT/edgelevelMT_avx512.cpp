@@ -90,7 +90,7 @@ __m512i __forceinline load_y_from_yc48(const BYTE *src) {
     return z1;
 }
 
-void __forceinline insert_y_yc48(uint8_t *dst, const uint8_t *src, const __m512i& zY) {
+static void __forceinline insert_y_yc48(uint8_t *dst, const uint8_t *src, const __m512i& zY) {
     alignas(64) static const uint16_t shuffle_yc48[] = {
          0, 11, 22,  1, 12, 23,  2, 13, 24,  3, 14, 25,  4, 15, 26,  5,
         16, 27,  6, 17, 28,  7, 18, 29,  8, 19, 30,  9, 20, 31, 10, 21
@@ -105,8 +105,8 @@ void __forceinline insert_y_yc48(uint8_t *dst, const uint8_t *src, const __m512i
     __mmask32 k1 = 0x92492492u;
     __mmask32 k0 = k1 >> 1;
     __mmask32 k2 = k1 >> 2;
-    z1 = _mm512_mask_mov_epi16(z1, k1, z7);
     z0 = _mm512_mask_mov_epi16(z0, k0, z7);
+    z1 = _mm512_mask_mov_epi16(z1, k1, z7);
     z2 = _mm512_mask_mov_epi16(z2, k2, z7);
 
     _mm512_storeu_si512((dst +   0), z0);
@@ -153,85 +153,90 @@ static __forceinline __m512i get_previous_2_y_pixels(BYTE *src) {
     return _mm512_inserti32x4(z0, x0, 3);
 }
 
+static __forceinline __m512i edgelevel_avx512_32(
+    const __m512i& zSrc1YM2, const __m512i &zSrc1YM1,
+    const __m512i& zSrc0, const __m512i&zSrc1, const __m512i &zSrc2,
+    const __m512i &zSrc1YP1, const __m512i &zSrc1YP2,
+    const __m512i &zThreshold, const __m512i &zStrength, const __m512i &zWc, const __m512i &zBc) {
+    __m512i zVmax = _mm512_max_epi16(zSrc1, zSrc1YM2);
+    __m512i zVmin = _mm512_min_epi16(zSrc1, zSrc1YM2);
+    zVmax = _mm512_max_epi16(zVmax, zSrc1YM1);
+    zVmin = _mm512_min_epi16(zVmin, zSrc1YM1);
+    zVmax = _mm512_max_epi16(zVmax, zSrc1YP1);
+    zVmin = _mm512_min_epi16(zVmin, zSrc1YP1);
+    zVmax = _mm512_max_epi16(zVmax, zSrc1YP2);
+    zVmin = _mm512_min_epi16(zVmin, zSrc1YP2);
+
+    __m512i zSrc1XM2 = _mm512_alignr512_epi8<64-4>(zSrc1, zSrc0);
+    __m512i zSrc1XM1 = _mm512_alignr512_epi8<64-2>(zSrc1, zSrc0);
+    __m512i zSrc1XP1 = _mm512_alignr512_epi8<2>(zSrc2, zSrc1);
+    __m512i zSrc1XP2 = _mm512_alignr512_epi8<4>(zSrc2, zSrc1);
+    __m512i zMax  = _mm512_max_epi16(zSrc1, zSrc1XM2);
+    __m512i zMin  = _mm512_min_epi16(zSrc1, zSrc1XM2);
+    zMax  = _mm512_max_epi16(zMax, zSrc1XM1);
+    zMin  = _mm512_min_epi16(zMin, zSrc1XM1);
+    zMax  = _mm512_max_epi16(zMax, zSrc1XP1);
+    zMin  = _mm512_min_epi16(zMin, zSrc1XP1);
+    zMax  = _mm512_max_epi16(zMax, zSrc1XP2);
+    zMin  = _mm512_min_epi16(zMin, zSrc1XP2);
+
+    //if (max - min < vmax - vmin) { max = vmax, min = vmin; }
+    __mmask32 kMask0 = _mm512_cmpgt_epi16_mask(_mm512_sub_epi16(zVmax, zVmin), _mm512_sub_epi16(zMax, zMin));
+    zMax  = _mm512_mask_mov_epi16(zMax, kMask0, zVmax);
+    zMin  = _mm512_mask_mov_epi16(zMin, kMask0, zVmin);
+
+    //avg = (min + max) >> 1;
+    __m512i zAvg = _mm512_srai_epi16(_mm512_add_epi16(zMax, zMin), 1);
+
+    //if (max - min > thrs)
+    __mmask32 kMask1 = _mm512_cmpgt_epi16_mask(_mm512_sub_epi16(zMax, zMin), zThreshold);
+
+    //if (src->y == max) max += wc * 2;
+    //else max += wc;
+    __mmask32 kMask2 = _mm512_cmpeq_epi16_mask(zSrc1, zMax);
+    zMax  = _mm512_add_epi16(zMax, zWc);
+    zMax  = _mm512_mask_add_epi16(zMax, kMask2, zMax, zWc);
+
+    //if (src->y == min) min -= bc * 2;
+    //else  min -= bc;
+    __mmask32 kMask3 = _mm512_cmpeq_epi16_mask(zSrc1, zMin);
+    zMin  = _mm512_sub_epi16(zMin, zBc);
+    zMin  = _mm512_mask_sub_epi16(zMin, kMask3, zMin, zBc);
+
+    //dst->y = (std::min)( (std::max)( short( src->y + ((src->y - avg) * str >> 4) ), min ), max );
+    __m512i z1, z0;
+    z1    = _mm512_sub_epi16(zAvg, zSrc1);
+    z0    = _mm512_unpacklo_epi16(z1, z1);
+    z1    = _mm512_unpackhi_epi16(z1, z1);
+    z0    = _mm512_madd_epi16(z0, zStrength);
+    z1    = _mm512_madd_epi16(z1, zStrength);
+    z0    = _mm512_srai_epi32(z0, 4);
+    z1    = _mm512_srai_epi32(z1, 4);
+    z0    = _mm512_packs_epi32(z0, z1);
+    z0    = _mm512_add_epi16(z0, zSrc1);
+    z0    = _mm512_max_epi16(z0, zMin);
+    z0    = _mm512_min_epi16(z0, zMax);
+
+    return _mm512_mask_mov_epi16(zSrc1, kMask1, z0);
+}
+
 template<bool avx512vbmi>
 static __forceinline void multi_thread_func_avx512_line(BYTE *dst, BYTE *src, int w, int max_w,
     const __m512i& zThreshold, const __m512i& zStrength, const __m512i& zWc, const __m512i& zBc) {
-    __m512i z0, z1, zSrc0, zSrc1, zSrc2, zTemp;
-    __m512i zY, zVmin, zVmax, zMin, zMax, zAvg;
-    zSrc0 = get_previous_2_y_pixels(src);
-    zSrc1 = load_y_from_yc48<avx512vbmi>(src);
+    __m512i zSrc0 = get_previous_2_y_pixels(src);
+    __m512i zSrc1 = load_y_from_yc48<avx512vbmi>(src);
     const BYTE *src_fin = src + w * PIXELYC_SIZE;
     for ( ; src < src_fin; src += 192, dst += 192) {
         //周辺近傍の最大と最小を縦方向・横方向に求める
-        zVmax = load_y_from_yc48<avx512vbmi>(src + (-2*max_w) * PIXELYC_SIZE);
-        zVmin = zVmax;
-        zTemp = load_y_from_yc48<avx512vbmi>(src + (-1*max_w) * PIXELYC_SIZE);
-        zVmax = _mm512_max_epi16(zVmax, zTemp);
-        zVmin = _mm512_min_epi16(zVmin, zTemp);
-        zVmax = _mm512_max_epi16(zVmax, zSrc1);
-        zVmin = _mm512_min_epi16(zVmin, zSrc1);
-        zTemp = load_y_from_yc48<avx512vbmi>(src + (1*max_w) * PIXELYC_SIZE);
-        zVmax = _mm512_max_epi16(zVmax, zTemp);
-        zVmin = _mm512_min_epi16(zVmin, zTemp);
-        zTemp = load_y_from_yc48<avx512vbmi>(src + (2*max_w) * PIXELYC_SIZE);
-        zVmax = _mm512_max_epi16(zVmax, zTemp);
-        zVmin = _mm512_min_epi16(zVmin, zTemp);
-        zSrc2 = load_y_from_yc48<avx512vbmi>(src + 32 * PIXELYC_SIZE);
-        zMax  = zSrc1;
-        zMin  = zMax;
-        zTemp = _mm512_alignr512_epi8<64-4>(zSrc1, zSrc0);
-        zMax  = _mm512_max_epi16(zMax, zTemp);
-        zMin  = _mm512_min_epi16(zMin, zTemp);
-        zTemp = _mm512_alignr512_epi8<64-2>(zSrc1, zSrc0);
-        zMax  = _mm512_max_epi16(zMax, zTemp);
-        zMin  = _mm512_min_epi16(zMin, zTemp);
-        zTemp = _mm512_alignr512_epi8<2>(zSrc2, zSrc1);
-        zMax  = _mm512_max_epi16(zMax, zTemp);
-        zMin  = _mm512_min_epi16(zMin, zTemp);
-        zTemp = _mm512_alignr512_epi8<4>(zSrc2, zSrc1);
-        zMax  = _mm512_max_epi16(zMax, zTemp);
-        zMin  = _mm512_min_epi16(zMin, zTemp);
+        __m512i zSrc1YM2 = load_y_from_yc48<avx512vbmi>(src + (-2*max_w) * PIXELYC_SIZE);
+        __m512i zSrc1YM1 = load_y_from_yc48<avx512vbmi>(src + (-1*max_w) * PIXELYC_SIZE);
+        __m512i zSrc1YP1 = load_y_from_yc48<avx512vbmi>(src + ( 1*max_w) * PIXELYC_SIZE);
+        __m512i zSrc1YP2 = load_y_from_yc48<avx512vbmi>(src + ( 2*max_w) * PIXELYC_SIZE);
+        __m512i zSrc2    = load_y_from_yc48<avx512vbmi>(src +         32 * PIXELYC_SIZE);
+
+        __m512i zY = edgelevel_avx512_32(zSrc1YM2, zSrc1YM1, zSrc0, zSrc1, zSrc2, zSrc1YP1, zSrc1YP2, zThreshold, zStrength, zWc, zBc);
         zSrc0 = zSrc1;
         zSrc1 = zSrc2;
-
-        //if (max - min < vmax - vmin) { max = vmax, min = vmin; }
-        __mmask32 kMask0 = _mm512_cmpgt_epi16_mask(_mm512_sub_epi16(zVmax, zVmin), _mm512_sub_epi16(zMax, zMin));
-        zMax  = _mm512_mask_mov_epi16(zMax, kMask0, zVmax);
-        zMin  = _mm512_mask_mov_epi16(zMin, kMask0, zVmin);
-
-        //avg = (min + max) >> 1;
-        zAvg  = _mm512_add_epi16(zMax, zMin);
-        zAvg  = _mm512_srai_epi16(zAvg, 1);
-
-        //if (max - min > thrs)
-        __mmask32 kMask1 = _mm512_cmpgt_epi16_mask(_mm512_sub_epi16(zMax, zMin), zThreshold);
-
-        //if (src->y == max) max += wc * 2;
-        //else max += wc;
-        __mmask32 kMask2 = _mm512_cmpeq_epi16_mask(zSrc0, zMax);
-        zMax  = _mm512_add_epi16(zMax, zWc);
-        zMax  = _mm512_mask_add_epi16(zMax, kMask2, zMax, zWc);
-
-        //if (src->y == min) min -= bc * 2;
-        //else  min -= bc;
-        __mmask32 kMask3 = _mm512_cmpeq_epi16_mask(zSrc0, zMin);
-        zMin  = _mm512_sub_epi16(zMin, zBc);
-        zMin  = _mm512_mask_sub_epi16(zMin, kMask3, zMin, zBc);
-
-        //dst->y = (std::min)( (std::max)( short( src->y + ((src->y - avg) * str >> 4) ), min ), max );
-        z1    = _mm512_sub_epi16(zAvg, zSrc0);
-        z0    = _mm512_unpacklo_epi16(z1, z1);
-        z1    = _mm512_unpackhi_epi16(z1, z1);
-        z0    = _mm512_madd_epi16(z0, zStrength);
-        z1    = _mm512_madd_epi16(z1, zStrength);
-        z0    = _mm512_srai_epi32(z0, 4);
-        z1    = _mm512_srai_epi32(z1, 4);
-        z0    = _mm512_packs_epi32(z0, z1);
-        z0    = _mm512_add_epi16(z0, zSrc0);
-        z0    = _mm512_max_epi16(z0, zMin);
-        z0    = _mm512_min_epi16(z0, zMax);
-
-        zY    = _mm512_mask_mov_epi16(zSrc0, kMask1, z0);
 
         insert_y_yc48(dst, src, zY);
     }
