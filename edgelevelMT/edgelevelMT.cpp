@@ -6,7 +6,6 @@
 #include <algorithm>
 #include "filter.h"
 #include "edgelevelMT.h"
-#include "edgelevelMT_util.h"
 
 
 //---------------------------------------------------------------------
@@ -66,32 +65,6 @@ FILTER_DLL filter = {
 };
 
 //---------------------------------------------------------------------
-//		エッジレベル調整 関数リスト
-//---------------------------------------------------------------------
-void multi_thread_check_threshold(int thread_id, int thread_num, void *param1, void *param2);
-
-void multi_thread_func( int thread_id, int thread_num, void *param1, void *param2 );
-void multi_thread_func_sse2(int thread_id, int thread_num, void *param1, void *param2);
-void multi_thread_func_sse2_aligned(int thread_id, int thread_num, void *param1, void *param2);
-void multi_thread_func_ssse3(int thread_id, int thread_num, void *param1, void *param2);
-void multi_thread_func_ssse3_aligned(int thread_id, int thread_num, void *param1, void *param2);
-void multi_thread_func_sse4_1(int thread_id, int thread_num, void *param1, void *param2);
-void multi_thread_func_sse4_1_aligned(int thread_id, int thread_num, void *param1, void *param2);
-void multi_thread_func_avx(int thread_id, int thread_num, void *param1, void *param2);
-void multi_thread_func_avx_aligned(int thread_id, int thread_num, void *param1, void *param2);
-
-static const MULTI_THREAD_FUNC func_list[][3] = {
-	{ multi_thread_check_threshold, multi_thread_func,        multi_thread_func },
-	{ multi_thread_check_threshold, multi_thread_func_sse2,   multi_thread_func_sse2_aligned },
-	{ multi_thread_check_threshold, multi_thread_func_ssse3,  multi_thread_func_ssse3_aligned },
-	{ multi_thread_check_threshold, multi_thread_func_sse4_1, multi_thread_func_sse4_1_aligned },
-#if (_MSC_VER >= 1600)
-	{ multi_thread_check_threshold, multi_thread_func_avx,    multi_thread_func_avx_aligned },
-#endif
-};
-
-
-//---------------------------------------------------------------------
 //		グローバル変数
 //---------------------------------------------------------------------
 // mt_func[0]    ... 通常処理用関数配列 (SIMD検出後設定)
@@ -108,15 +81,13 @@ EXTERN_C FILTER_DLL __declspec(dllexport) * __stdcall GetFilterTable(void)
 	return &filter;
 }
 
+#pragma warning (push)
+#pragma warning (disable: 4100) //warning C4100: 引数は関数の本体部で 1 度も参照されません。
 BOOL func_init(FILTER *fp) {
-	DWORD availSIMD = get_availableSIMD();
-	if      (availSIMD & AUF_SIMD_AVX)   mt_func = func_list[4];
-	else if (availSIMD & AUF_SIMD_SSE41) mt_func = func_list[3];
-	else if (availSIMD & AUF_SIMD_SSSE3) mt_func = func_list[2];
-	else if (availSIMD & AUF_SIMD_SSE2)  mt_func = func_list[1];
-	else                                 mt_func = func_list[0];
+	mt_func = get_func_list();
 	return TRUE;
 }
+#pragma warning (pop)
 
 //---------------------------------------------------------------------
 //		フィルタ処理関数
@@ -138,8 +109,8 @@ void multi_thread_func(int thread_id, int thread_num, void *param1, void *param2
 	PIXEL_YC *src, *dst;
 	int pitch = fpip->max_w;
 	const int h = fpip->h, w = fpip->w;
-	const int str = fp->track[0], thrs = fp->track[1] * 8;
-	const int bc = fp->track[2] * 16, wc = fp->track[3] * 16;
+	const short str = (short)fp->track[0], thrs = (short)fp->track[1] * 8;
+	const short bc = (short)fp->track[2] * 16, wc = (short)fp->track[3] * 16;
 	short max, min, vmax, vmin, avg;
 
 	//	スレッド毎の画像を処理する場所を計算する
@@ -225,8 +196,7 @@ void multi_thread_check_threshold(int thread_id, int thread_num, void *param1, v
 	PIXEL_YC *src, *dst;
 	const int pitch = fpip->max_w;
 	const int h = fpip->h, w = fpip->w;
-	const int str = fp->track[0], thrs = fp->track[1] * 8;
-	const int bc = fp->track[2] * 16, wc = fp->track[3] * 16;
+	const int thrs = fp->track[1] * 8;
 	short max, min, vmax, vmin, avg;
 
 	//	スレッド毎の画像を処理する場所を計算する
@@ -289,6 +259,35 @@ void multi_thread_check_threshold(int thread_id, int thread_num, void *param1, v
 	}
 }
 
+void simd_debug(FILTER *fp, FILTER_PROC_INFO *fpip) {
+	if (fp->check[0])
+		return;
+
+	PIXEL_YC *debug_buffer = (PIXEL_YC *)_aligned_malloc(fpip->max_w * fpip->max_h * sizeof(PIXEL_YC), 16);
+	if (NULL == debug_buffer)
+		return;
+
+	PIXEL_YC *temp = fpip->ycp_temp;
+	fpip->ycp_temp = debug_buffer;
+	fp->exfunc->exec_multi_thread_func(multi_thread_func, (void *)fp, (void *)fpip);
+
+	int error_count = 0;
+	for (int y = 0; y < fpip->h; y++) {
+		PIXEL_YC *ptr_simd  = temp + y * fpip->max_w;
+		PIXEL_YC *ptr_debug = debug_buffer + y * fpip->max_w;
+		for (int x = 0; x < fpip->w; x++) {
+			if (0 != memcmp(&ptr_simd[x], &ptr_debug[x], sizeof(PIXEL_YC))) {
+				error_count++;
+			}
+		}
+	}
+	if (error_count)
+		MessageBox(NULL, "SIMD error!", "edgelevelMT", NULL);
+
+	fpip->ycp_temp = temp;
+	_aligned_free(debug_buffer);
+}
+
 //---------------------------------------------------------------------
 //		フィルタ処理関数
 //---------------------------------------------------------------------
@@ -300,6 +299,10 @@ BOOL func_proc(FILTER *fp, FILTER_PROC_INFO *fpip)
 	fp->exfunc->exec_multi_thread_func(
 		mt_func[run + (align & run)], 
 		(void *)fp, (void *)fpip);
+
+#if SIMD_DEBUG
+	simd_debug(fp, fpip);
+#endif
 
 	//	もし画像領域ポインタの入れ替えや解像度変更等の
 	//	fpip の内容を変える場合はこちらの関数内で処理をする

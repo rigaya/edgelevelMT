@@ -21,7 +21,7 @@
     <ClInclude Include="edgelevelMT.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="edgelevelMT_util.h">
+    <ClInclude Include="edgelevelMT_simd.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
   </ItemGroup>
@@ -29,10 +29,22 @@
     <ClCompile Include="edgelevelMT.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="edgelevelMT_SIMD.cpp">
+    <ClCompile Include="edgelevelMT_sse2.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="edgelevelMT_AVX.cpp">
+    <ClCompile Include="edgelevelMT_sse41.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="edgelevelMT_ssse3.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="edgelevelMT_avx.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="edgelevelMT_simd.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="edgelevelMT_avx2.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
   </ItemGroup>
