@@ -2,6 +2,7 @@
 //		マルチスレッド対応サンプルフィルタ(フィルタプラグイン)  for AviUtl ver0.99a以降
 //---------------------------------------------------------------------------------------------
 #include <Windows.h>
+#include <tchar.h>
 #include <algorithm>
 #include "filter.h"
 #include "edgelevelMT.h"
@@ -12,12 +13,14 @@
 //		フィルタ構造体定義
 //---------------------------------------------------------------------
 const int TRACK_N = 4;
-TCHAR *track_name[] =	{ (TCHAR*)"特性", (TCHAR*)"閾値", (TCHAR*)"黒補正", (TCHAR*)"白補正" };
-int track_default[] =	{ 10,	16,	0,	0  };
-int track_s[] =		{ -31,	0,	0,	0  };
-int track_e[] =		{ 31,	255,	31,	31 };
+TCHAR *track_name[]    = { (TCHAR*)"特性", (TCHAR*)"閾値", (TCHAR*)"黒補正", (TCHAR*)"白補正" };
+int    track_default[] = { 10, 16, 0, 0 };
+int    track_s[]       = { -31, 0, 0, 0 };
+int    track_e[]       = { 31, 255, 31, 31 };
 
-const int CHECK_N = 0;
+const int CHECK_N = 1;
+TCHAR *check_name[]    = { (TCHAR*)"判定表示" };
+int    check_default[] = { 0 };
 
 FILTER_DLL filter = {
 	FILTER_FLAG_EX_INFORMATION,	//	フィルタのフラグ
@@ -46,8 +49,8 @@ FILTER_DLL filter = {
 	track_default,				//	トラックバーの初期値郡へのポインタ
 	track_s,track_e,			//	トラックバーの数値の下限上限 (NULLなら全て0～256)
 	CHECK_N,					//	チェックボックスの数 (0なら名前初期値等もNULLでよい)
-	NULL,					    //	チェックボックスの名前郡へのポインタ
-	NULL,				        //	チェックボックスの初期値郡へのポインタ
+	check_name,					//	チェックボックスの名前郡へのポインタ
+	check_default,				//	チェックボックスの初期値郡へのポインタ
 	func_proc,					//	フィルタ処理関数へのポインタ (NULLなら呼ばれません)
 	func_init,					//	開始時に呼ばれる関数へのポインタ (NULLなら呼ばれません)
 	NULL,						//	終了時に呼ばれる関数へのポインタ (NULLなら呼ばれません)
@@ -65,6 +68,8 @@ FILTER_DLL filter = {
 //---------------------------------------------------------------------
 //		エッジレベル調整 関数リスト
 //---------------------------------------------------------------------
+void multi_thread_check_threshold(int thread_id, int thread_num, void *param1, void *param2);
+
 void multi_thread_func( int thread_id, int thread_num, void *param1, void *param2 );
 void multi_thread_func_sse2(int thread_id, int thread_num, void *param1, void *param2);
 void multi_thread_func_sse2_aligned(int thread_id, int thread_num, void *param1, void *param2);
@@ -75,13 +80,13 @@ void multi_thread_func_sse4_1_aligned(int thread_id, int thread_num, void *param
 void multi_thread_func_avx(int thread_id, int thread_num, void *param1, void *param2);
 void multi_thread_func_avx_aligned(int thread_id, int thread_num, void *param1, void *param2);
 
-static const MULTI_THREAD_FUNC func_list[][2] = {
-	{ multi_thread_func,        multi_thread_func },
-	{ multi_thread_func_sse2,   multi_thread_func_sse2_aligned },
-	{ multi_thread_func_ssse3,  multi_thread_func_ssse3_aligned },
-	{ multi_thread_func_sse4_1, multi_thread_func_sse4_1_aligned },
+static const MULTI_THREAD_FUNC func_list[][3] = {
+	{ multi_thread_check_threshold, multi_thread_func,        multi_thread_func },
+	{ multi_thread_check_threshold, multi_thread_func_sse2,   multi_thread_func_sse2_aligned },
+	{ multi_thread_check_threshold, multi_thread_func_ssse3,  multi_thread_func_ssse3_aligned },
+	{ multi_thread_check_threshold, multi_thread_func_sse4_1, multi_thread_func_sse4_1_aligned },
 #if (_MSC_VER >= 1600)
-	{ multi_thread_func_avx,    multi_thread_func_avx_aligned },
+	{ multi_thread_check_threshold, multi_thread_func_avx,    multi_thread_func_avx_aligned },
 #endif
 };
 
@@ -89,12 +94,16 @@ static const MULTI_THREAD_FUNC func_list[][2] = {
 //---------------------------------------------------------------------
 //		グローバル変数
 //---------------------------------------------------------------------
+// mt_func[0]    ... 通常処理用関数配列 (SIMD検出後設定)
+// mt_func[1]    ... エッジ判定チェック用関数配列
+// mt_func[n][0] ... non-aligned用関数
+// mt_func[n][1] ... aligned用関数
 static const MULTI_THREAD_FUNC *mt_func = NULL;
 
 //---------------------------------------------------------------------
 //		フィルタ構造体のポインタを渡す関数
 //---------------------------------------------------------------------
-EXTERN_C FILTER_DLL __declspec(dllexport) * __stdcall GetFilterTable( void )
+EXTERN_C FILTER_DLL __declspec(dllexport) * __stdcall GetFilterTable(void)
 {
 	return &filter;
 }
@@ -112,7 +121,9 @@ BOOL func_init(FILTER *fp) {
 //---------------------------------------------------------------------
 //		フィルタ処理関数
 //---------------------------------------------------------------------
-void multi_thread_func( int thread_id, int thread_num, void *param1, void *param2 )
+
+//エッジレベル調整の基本コード
+void multi_thread_func(int thread_id, int thread_num, void *param1, void *param2)
 {
 //	thread_id	: スレッド番号 ( 0 ～ thread_num-1 )
 //	thread_num	: スレッド数 ( 1 ～ )
@@ -124,27 +135,22 @@ void multi_thread_func( int thread_id, int thread_num, void *param1, void *param
 	FILTER *fp				= (FILTER *)param1;
 	FILTER_PROC_INFO *fpip	= (FILTER_PROC_INFO *)param2;
 
-	int	y_start, y_end;
-
 	PIXEL_YC *src, *dst;
 	int pitch = fpip->max_w;
-	int h = fpip->h, w = fpip->w;
-	int str = fp->track[0], thrs = fp->track[1] * 8;
-	int bc = fp->track[2] * 16, wc = fp->track[3] * 16;
+	const int h = fpip->h, w = fpip->w;
+	const int str = fp->track[0], thrs = fp->track[1] * 8;
+	const int bc = fp->track[2] * 16, wc = fp->track[3] * 16;
 	short max, min, vmax, vmin, avg;
 
 	//	スレッド毎の画像を処理する場所を計算する
-	y_start = ( h * thread_id     ) / thread_num;
-	y_end   = ( h * (thread_id+1) ) / thread_num;
+	const int y_start = (h *  thread_id   ) / thread_num;
+	const int y_end   = (h * (thread_id+1)) / thread_num;
 
 	for (int y = y_start; y < y_end; y++) {
 		src = fpip->ycp_edit + y * pitch;
 		dst = fpip->ycp_temp + y * pitch;
 
-		if (y < 2 || h - 3 < y) {
-			for (int x = 0; x < w; x++)
-				dst[x] = src[x];
-		} else {
+		if (1 < y && y < h - 2) {
 			*dst = *src;
 			dst++; src++;
 			*dst = *src;
@@ -195,6 +201,90 @@ void multi_thread_func( int thread_id, int thread_num, void *param1, void *param
 				*dst = *src;
 				dst++; src++;
 			}
+		} else {
+			for (int x = 0; x < w; x++)
+				dst[x] = src[x];
+		}
+	}
+}
+
+//エッジと判定して、調整をかけるところを表示する
+//調整をかけないところは黒
+void multi_thread_check_threshold(int thread_id, int thread_num, void *param1, void *param2)
+{
+	//	thread_id	: スレッド番号 ( 0 ～ thread_num-1 )
+	//	thread_num	: スレッド数 ( 1 ～ )
+	//	param1		: 汎用パラメータ
+	//	param2		: 汎用パラメータ
+	//
+	//	この関数内からWin32APIや外部関数(rgb2yc,yc2rgbは除く)を使用しないでください。
+	//
+	FILTER *fp				= (FILTER *)param1;
+	FILTER_PROC_INFO *fpip	= (FILTER_PROC_INFO *)param2;
+
+	PIXEL_YC *src, *dst;
+	const int pitch = fpip->max_w;
+	const int h = fpip->h, w = fpip->w;
+	const int str = fp->track[0], thrs = fp->track[1] * 8;
+	const int bc = fp->track[2] * 16, wc = fp->track[3] * 16;
+	short max, min, vmax, vmin, avg;
+
+	//	スレッド毎の画像を処理する場所を計算する
+	const int y_start = (h *  thread_id   ) / thread_num;
+	const int y_end   = (h * (thread_id+1)) / thread_num;
+	
+	const PIXEL_YC YC_ORANGE = { 2255, -836,  1176 }; //調整 - 明 - 白補正対象
+	const PIXEL_YC YC_YELLOW = { 3514, -626,    73 }; //調整 - 明
+	const PIXEL_YC YC_SKY    = { 3702,  169,  -610 }; //調整 - 暗
+	const PIXEL_YC YC_BLUE   = { 1900, 1240,  -230 }; //調整 - 暗 - 黒補正対象
+	const PIXEL_YC YC_BLACK  = { 1013,    0,     0 }; //エッジでない
+
+	for (int y = y_start; y < y_end; y++) {
+		src = fpip->ycp_edit + y * pitch;
+		dst = fpip->ycp_temp + y * pitch;
+
+		if (1 < y && y < h - 2) {
+			*dst = YC_BLACK;
+			dst++; src++;
+			*dst = YC_BLACK;
+			dst++; src++;
+
+			int n = w - 2;
+			for (int x = 2; x < n; x++) {
+				max = min = src[-2].y;
+				vmax = vmin = src[-2*pitch].y;
+
+				for (int i = -1; i < 3; ++i) {
+					max  = (std::max)( max, src[i].y );
+					min  = (std::min)( min, src[i].y );
+					vmax = (std::max)( vmax, src[i*pitch].y );
+					vmin = (std::min)( vmin, src[i*pitch].y );
+				}
+
+				if (max - min < vmax - vmin)
+					max = vmax, min = vmin;
+
+				if (max - min > thrs) {
+					avg = (max + min) >> 1;
+					if (src->y == min)
+						*dst = YC_BLUE;
+					else if (src->y == max)
+						*dst = YC_ORANGE;
+					else
+						*dst = (src->y > avg) ? YC_YELLOW : YC_SKY;
+				} else {
+					*dst = YC_BLACK;
+				}
+
+				dst++; src++;
+			}
+			for (int x = n; x < w; x++) {
+				*dst = YC_BLACK;
+				dst++; src++;
+			}
+		} else {
+			for (int x = 0; x < w; x++)
+				dst[x] = YC_BLACK;
 		}
 	}
 }
@@ -204,9 +294,11 @@ void multi_thread_func( int thread_id, int thread_num, void *param1, void *param
 //---------------------------------------------------------------------
 BOOL func_proc(FILTER *fp, FILTER_PROC_INFO *fpip)
 {
+	BOOL run = !fp->check[0] | fp->exfunc->is_saving(fpip->editp);
+	BOOL align = (((size_t)fpip->ycp_temp | (size_t)fpip->ycp_edit | fpip->max_w) & 0x0F) == 0x00;
 	//	マルチスレッドでフィルタ処理関数を呼ぶ
 	fp->exfunc->exec_multi_thread_func(
-		mt_func[(((size_t)fpip->ycp_temp | (size_t)fpip->ycp_edit | fpip->max_w) & 0x0F) == 0x00], 
+		mt_func[run + (align & run)], 
 		(void *)fp, (void *)fpip);
 
 	//	もし画像領域ポインタの入れ替えや解像度変更等の

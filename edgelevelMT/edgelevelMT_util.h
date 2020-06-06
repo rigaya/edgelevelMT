@@ -21,12 +21,10 @@ enum {
 #endif
 };
 
-typedef DWORD AUF_SIMD; 
-
-static AUF_SIMD get_availableSIMD() {
+static DWORD get_availableSIMD() {
 	int CPUInfo[4];
 	__cpuid(CPUInfo, 1);
-	AUF_SIMD simd = AUF_SIMD_NONE;
+	DWORD simd = AUF_SIMD_NONE;
 	if  (CPUInfo[3] & 0x04000000)
 		simd |= AUF_SIMD_SSE2;
 	if  (CPUInfo[2] & 0x00000001)
