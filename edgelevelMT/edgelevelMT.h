@@ -2,11 +2,11 @@
 
 #include <Windows.h>
 
-#define AUF_VERSION      0,0,7,6
-#define AUF_VERSION_STR  "0.7 v6"
+#define AUF_VERSION      0,0,7,7
+#define AUF_VERSION_STR  "0.7 v7"
 #define AUF_NAME         "edgelevelMT.auf"
 #define AUF_FULL_NAME    "エッジレベル調整 MT ver 0.7"
-#define AUF_VERSION_NAME "エッジレベル調整 MT ver 0.7 v6"
+#define AUF_VERSION_NAME "エッジレベル調整 MT ver 0.7 v7"
 #define AUF_VERSION_INFO AUF_VERSION_NAME
 
 #ifdef DEBUG
