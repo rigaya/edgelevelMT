@@ -117,7 +117,12 @@
     <ClInclude Include="filter.h" />
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="edgelevelMT.rc" />
+    <ResourceCompile Include="edgelevelMT.rc">
+      <Culture Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">0x0411</Culture>
+      <Culture Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">0x0411</Culture>
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">/c 65001 %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">/c 65001 %(AdditionalOptions)</AdditionalOptions>
+    </ResourceCompile>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
