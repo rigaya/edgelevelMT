@@ -47,6 +47,9 @@
     <ClCompile Include="edgelevelMT_avx2.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
+    <ClCompile Include="edgelevelMT_avx512.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="edgelevelMT.def">

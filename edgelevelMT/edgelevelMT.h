@@ -2,13 +2,13 @@
 
 #include <Windows.h>
 
-#define SIMD_DEBUG 0
+#define SIMD_DEBUG 1
 
-#define AUF_VERSION      0,0,7,8
-#define AUF_VERSION_STR  "0.7 v8"
+#define AUF_VERSION      0,0,7,9
+#define AUF_VERSION_STR  "0.7 v9"
 #define AUF_NAME         "edgelevelMT.auf"
 #define AUF_FULL_NAME    "エッジレベル調整 MT ver 0.7"
-#define AUF_VERSION_NAME "エッジレベル調整 MT ver 0.7 v8"
+#define AUF_VERSION_NAME "エッジレベル調整 MT ver 0.7 v9"
 #define AUF_VERSION_INFO AUF_VERSION_NAME
 
 #ifdef DEBUG
