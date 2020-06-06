@@ -1,0 +1,5 @@
+﻿LIBRARY edgelevelMT.auf
+
+EXPORTS
+	GetFilterTable @1
+
