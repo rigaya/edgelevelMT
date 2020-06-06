@@ -141,7 +141,7 @@ void multi_thread_func( int thread_id, int thread_num, void *param1, void *param
 		src = fpip->ycp_edit + y * pitch;
 		dst = fpip->ycp_temp + y * pitch;
 
-		if (y <= 2 || h - 2 <= y) {
+		if (y < 2 || h - 3 < y) {
 			for (int x = 0; x < w; x++)
 				dst[x] = src[x];
 		} else {

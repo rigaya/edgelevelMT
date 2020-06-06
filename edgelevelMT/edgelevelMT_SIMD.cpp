@@ -74,7 +74,7 @@ void multi_thread_func_sse2(int thread_id, int thread_num, void *param1, void *p
 		src = (BYTE *)fpip->ycp_edit + y * max_w * PIXELYC_SIZE;
 		dst = (BYTE *)fpip->ycp_temp + y * max_w * PIXELYC_SIZE;
 		src_fin = src + w * PIXELYC_SIZE;
-		if (y <= 2 || h - 3 <= y) {
+		if (y < 2 || h - 3 < y) {
 			for ( ; src < src_fin; src += 64, dst += 64) {
 				x0 = _mm_loadu_si128((__m128i *)(src +  0));
 				x1 = _mm_loadu_si128((__m128i *)(src + 16));
@@ -176,7 +176,7 @@ void multi_thread_func_sse2(int thread_id, int thread_num, void *param1, void *p
 			x0 = _mm_loadu_si128((__m128i *)line_src);
 			x1 = _mm_loadu_si128((__m128i *)(line_src + w * PIXELYC_SIZE - 12));
 			_mm_maskmoveu_si128(x0, MASK_FRAME_EDGE, (char *)line_dst);
-			_mm_maskmoveu_si128(x1, MASK_FRAME_EDGE, (char *)(line_dst + w * PIXELYC_SIZE - 12));
+			_mm_storeu_si128((__m128i *)(line_dst + w * PIXELYC_SIZE - 12), x1);
 		}
 	}
 }
@@ -211,7 +211,7 @@ void multi_thread_func_sse2_aligned(int thread_id, int thread_num, void *param1,
 		src = (BYTE *)fpip->ycp_edit + y * max_w * PIXELYC_SIZE;
 		dst = (BYTE *)fpip->ycp_temp + y * max_w * PIXELYC_SIZE;
 		src_fin = src + w * PIXELYC_SIZE;
-		if (y <= 2 || h - 3 <= y) {
+		if (y < 2 || h - 3 < y) {
 			for ( ; src < src_fin; src += 64, dst += 64) {
 				x0 = _mm_load_si128((__m128i *)(src +  0));
 				x1 = _mm_load_si128((__m128i *)(src + 16));
@@ -313,7 +313,7 @@ void multi_thread_func_sse2_aligned(int thread_id, int thread_num, void *param1,
 			x0 = _mm_load_si128((__m128i *)line_src);
 			x1 = _mm_loadu_si128((__m128i *)(line_src + w * PIXELYC_SIZE - 12));
 			_mm_maskmoveu_si128(x0, MASK_FRAME_EDGE, (char *)line_dst);
-			_mm_maskmoveu_si128(x1, MASK_FRAME_EDGE, (char *)(line_dst + w * PIXELYC_SIZE - 12));
+			_mm_storeu_si128((__m128i *)(line_dst + w * PIXELYC_SIZE - 12), x1);
 		}
 	}
 }
@@ -375,7 +375,7 @@ void multi_thread_func_ssse3(int thread_id, int thread_num, void *param1, void *
 		src = (BYTE *)fpip->ycp_edit + y * max_w * PIXELYC_SIZE;
 		dst = (BYTE *)fpip->ycp_temp + y * max_w * PIXELYC_SIZE;
 		src_fin = src + w * PIXELYC_SIZE;
-		if (y <= 2 || h - 3 <= y) {
+		if (y < 2 || h - 3 < y) {
 			for ( ; src < src_fin; src += 64, dst += 64) {
 				x0 = _mm_loadu_si128((__m128i *)(src +  0));
 				x1 = _mm_loadu_si128((__m128i *)(src + 16));
@@ -478,7 +478,7 @@ void multi_thread_func_ssse3(int thread_id, int thread_num, void *param1, void *
 			x0 = _mm_loadu_si128((__m128i *)line_src);
 			x1 = _mm_loadu_si128((__m128i *)(line_src + w * PIXELYC_SIZE - 12));
 			_mm_maskmoveu_si128(x0, MASK_FRAME_EDGE, (char *)line_dst);
-			_mm_maskmoveu_si128(x1, MASK_FRAME_EDGE, (char *)(line_dst + w * PIXELYC_SIZE - 12));
+			_mm_storeu_si128((__m128i *)(line_dst + w * PIXELYC_SIZE - 12), x1);
 		}
 	}
 }
@@ -513,7 +513,7 @@ void multi_thread_func_ssse3_aligned(int thread_id, int thread_num, void *param1
 		src = (BYTE *)fpip->ycp_edit + y * max_w * PIXELYC_SIZE;
 		dst = (BYTE *)fpip->ycp_temp + y * max_w * PIXELYC_SIZE;
 		src_fin = src + w * PIXELYC_SIZE;
-		if (y <= 2 || h - 3 <= y) {
+		if (y < 2 || h - 3 < y) {
 			for ( ; src < src_fin; src += 64, dst += 64) {
 				x0 = _mm_load_si128((__m128i *)(src +  0));
 				x1 = _mm_load_si128((__m128i *)(src + 16));
@@ -615,7 +615,7 @@ void multi_thread_func_ssse3_aligned(int thread_id, int thread_num, void *param1
 			x0 = _mm_load_si128((__m128i *)line_src);
 			x1 = _mm_loadu_si128((__m128i *)(line_src + w * PIXELYC_SIZE - 12));
 			_mm_maskmoveu_si128(x0, MASK_FRAME_EDGE, (char *)line_dst);
-			_mm_maskmoveu_si128(x1, MASK_FRAME_EDGE, (char *)(line_dst + w * PIXELYC_SIZE - 12));
+			_mm_storeu_si128((__m128i *)(line_dst + w * PIXELYC_SIZE - 12), x1);
 		}
 	}
 }
@@ -678,7 +678,7 @@ void multi_thread_func_sse4_1_aligned(int thread_id, int thread_num, void *param
 		src = (BYTE *)fpip->ycp_edit + y * max_w * PIXELYC_SIZE;
 		dst = (BYTE *)fpip->ycp_temp + y * max_w * PIXELYC_SIZE;
 		src_fin = src + w * PIXELYC_SIZE;
-		if (y <= 2 || h - 3 <= y) {
+		if (y < 2 || h - 3 < y) {
 			for ( ; src < src_fin; src += 64, dst += 64) {
 				x0 = _mm_load_si128((__m128i *)(src +  0));
 				x1 = _mm_load_si128((__m128i *)(src + 16));
@@ -780,7 +780,7 @@ void multi_thread_func_sse4_1_aligned(int thread_id, int thread_num, void *param
 			x0 = _mm_load_si128((__m128i *)line_src);
 			x1 = _mm_loadu_si128((__m128i *)(line_src + w * PIXELYC_SIZE - 12));
 			_mm_maskmoveu_si128(x0, MASK_FRAME_EDGE, (char *)line_dst);
-			_mm_maskmoveu_si128(x1, MASK_FRAME_EDGE, (char *)(line_dst + w * PIXELYC_SIZE - 12));
+			_mm_storeu_si128((__m128i *)(line_dst + w * PIXELYC_SIZE - 12), x1);
 		}
 	}
 }
@@ -816,7 +816,7 @@ void multi_thread_func_sse4_1(int thread_id, int thread_num, void *param1, void 
 		src = ((BYTE *)fpip->ycp_edit) + y * max_w * PIXELYC_SIZE;
 		dst = ((BYTE *)fpip->ycp_temp) + y * max_w * PIXELYC_SIZE;
 		src_fin = src + w * PIXELYC_SIZE;
-		if (y <= 2 || h - 3 <= y) {
+		if (y < 2 || h - 3 < y) {
 			for ( ; src < src_fin; src += 64, dst += 64) {
 				x0 = _mm_loadu_si128((__m128i *)(src +  0));
 				x1 = _mm_loadu_si128((__m128i *)(src + 16));
@@ -919,7 +919,7 @@ void multi_thread_func_sse4_1(int thread_id, int thread_num, void *param1, void 
 			x0 = _mm_loadu_si128((__m128i *)line_src);
 			x1 = _mm_loadu_si128((__m128i *)(line_src + w * PIXELYC_SIZE - 12));
 			_mm_maskmoveu_si128(x0, MASK_FRAME_EDGE, (char *)line_dst);
-			_mm_maskmoveu_si128(x1, MASK_FRAME_EDGE, (char *)(line_dst + w * PIXELYC_SIZE - 12));
+			_mm_storeu_si128((__m128i *)(line_dst + w * PIXELYC_SIZE - 12), x1);
 		}
 	}
 }
