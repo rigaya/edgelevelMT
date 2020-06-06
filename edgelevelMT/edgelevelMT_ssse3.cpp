@@ -7,9 +7,9 @@
 #include "edgelevelMT_simd.h"
 
 void multi_thread_func_ssse3_aligned(int thread_id, int thread_num, void *param1, void *param2) {
-	multi_thread_func_simd<true>(thread_id, thread_num, param1, param2);
+    multi_thread_func_simd<true>(thread_id, thread_num, param1, param2);
 }
 
 void multi_thread_func_ssse3(int thread_id, int thread_num, void *param1, void *param2) {
-	multi_thread_func_simd<false>(thread_id, thread_num, param1, param2);
+    multi_thread_func_simd<false>(thread_id, thread_num, param1, param2);
 }
