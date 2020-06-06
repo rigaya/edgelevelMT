@@ -116,17 +116,20 @@ void multi_thread_func_avx_aligned(int thread_id, int thread_num, void *param1, 
 				xAvg  = _mm_add_epi16(xMax, xMin);
 				xAvg  = _mm_srai_epi16(xAvg, 1);
 
+				//if (max - min > thrs)
+				xMask = _mm_cmpgt_epi16(_mm_sub_epi16(xMax, xMin), _mm_set1_epi16(thrs));
+
 				//if (src->y == max) max += wc * 2;
 				//else max += wc;
-				xMask = _mm_cmpeq_epi16(xY, xMax);
+				x1    = _mm_cmpeq_epi16(xY, xMax);
 				xMax  = _mm_add_epi16(xMax, _mm_set1_epi16(wc));
-				xMax  = _mm_add_epi16(xMax, _mm_and_si128(_mm_set1_epi16(wc), xMask));
+				xMax  = _mm_add_epi16(xMax, _mm_and_si128(_mm_set1_epi16(wc), x1));
 				
 				//if (src->y == min) min -= bc * 2;
 				//else  min -= bc;
-				xMask = _mm_cmpeq_epi16(xY, xMin);
+				x1    = _mm_cmpeq_epi16(xY, xMin);
 				xMin  = _mm_sub_epi16(xMin, _mm_set1_epi16(bc));
-				xMin  = _mm_sub_epi16(xMin, _mm_and_si128(_mm_set1_epi16(bc), xMask));
+				xMin  = _mm_sub_epi16(xMin, _mm_and_si128(_mm_set1_epi16(bc), x1));
 
 				//dst->y = (std::min)( (std::max)( short( src->y + ((src->y - avg) * str >> 4) ), min ), max );
 				x1    = _mm_sub_epi16(xAvg, xY);
@@ -142,8 +145,6 @@ void multi_thread_func_avx_aligned(int thread_id, int thread_num, void *param1, 
 				x0    = _mm_max_epi16(x0, xMin);
 				x0    = _mm_min_epi16(x0, xMax);
 
-				//if (max - min > thrs)
-				xMask = _mm_cmpgt_epi16(_mm_sub_epi16(xMax, xMin), _mm_set1_epi16(thrs));
 				xY    = _mm_blendv_epi8(xY, x0, xMask);
 
 				x0 = _mm_load_si128((__m128i *)(src +  0));
@@ -254,17 +255,20 @@ void multi_thread_func_avx(int thread_id, int thread_num, void *param1, void *pa
 				xAvg  = _mm_add_epi16(xMax, xMin);
 				xAvg  = _mm_srai_epi16(xAvg, 1);
 
+				//if (max - min > thrs)
+				xMask = _mm_cmpgt_epi16(_mm_sub_epi16(xMax, xMin), _mm_set1_epi16(thrs));
+
 				//if (src->y == max) max += wc * 2;
 				//else max += wc;
-				xMask = _mm_cmpeq_epi16(xY, xMax);
+				x1    = _mm_cmpeq_epi16(xY, xMax);
 				xMax  = _mm_add_epi16(xMax, _mm_set1_epi16(wc));
-				xMax  = _mm_add_epi16(xMax, _mm_and_si128(_mm_set1_epi16(wc), xMask));
+				xMax  = _mm_add_epi16(xMax, _mm_and_si128(_mm_set1_epi16(wc), x1));
 				
 				//if (src->y == min) min -= bc * 2;
 				//else  min -= bc;
-				xMask = _mm_cmpeq_epi16(xY, xMin);
+				x1    = _mm_cmpeq_epi16(xY, xMin);
 				xMin  = _mm_sub_epi16(xMin, _mm_set1_epi16(bc));
-				xMin  = _mm_sub_epi16(xMin, _mm_and_si128(_mm_set1_epi16(bc), xMask));
+				xMin  = _mm_sub_epi16(xMin, _mm_and_si128(_mm_set1_epi16(bc), x1));
 
 				//dst->y = (std::min)( (std::max)( short( src->y + ((src->y - avg) * str >> 4) ), min ), max );
 				x1    = _mm_sub_epi16(xAvg, xY);
@@ -280,8 +284,6 @@ void multi_thread_func_avx(int thread_id, int thread_num, void *param1, void *pa
 				x0    = _mm_max_epi16(x0, xMin);
 				x0    = _mm_min_epi16(x0, xMax);
 
-				//if (max - min > thrs)
-				xMask = _mm_cmpgt_epi16(_mm_sub_epi16(xMax, xMin), _mm_set1_epi16(thrs));
 				xY    = _mm_blendv_epi8(xY, x0, xMask);
 
 				x0 = _mm_loadu_si128((__m128i *)(src +  0));
