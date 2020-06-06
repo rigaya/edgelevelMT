@@ -167,14 +167,21 @@ void multi_thread_func( int thread_id, int thread_num, void *param1, void *param
 
 				if (max - min > thrs) {
 					avg = (min + max) >> 1;
+					//if (src->y == min)
+					//	min -= bc * 2;
+					//else 
+					//	min -= bc;
+					//if (src->y == max)
+					//	max += wc * 2;
+					//else
+					//	max += wc;
+					
 					if (src->y == min)
-						min -= bc * 2;
-					else 
 						min -= bc;
+					min -= bc;
 					if (src->y == max)
-						max += wc * 2;
-					else
 						max += wc;
+					max += wc;
 
 					dst->y = (std::min)( (std::max)( short( src->y + ((src->y - avg) * str >> 4) ), min ), max );
 				} else

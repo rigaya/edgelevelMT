@@ -50,7 +50,7 @@ void multi_thread_func_avx_aligned(int thread_id, int thread_num, void *param1, 
 	int bc = fp->track[2] * 16, wc = fp->track[3] * 16;
 	//こんなにレジスタは多くないけど、適当に最適化してもらう
 	__m128i x0, x1, x2, x3;
-	__m128i xY, xVmin, xVmax, xMin, xMax, xMask;
+	__m128i xY, xVmin, xVmax, xMin, xMax, xMask, xAvg;
 	const int MASK_INT = 0x40 + 0x08 + 0x01;
 
 	//	スレッド毎の画像を処理する場所を計算する
@@ -106,29 +106,30 @@ void multi_thread_func_avx_aligned(int thread_id, int thread_num, void *param1, 
 				x0    = get_y_from_pixelyc_sse4_1_aligned(src + (2*max_w) * PIXELYC_SIZE);
 				xVmax = _mm_max_epi16(xVmax, x0);
 				xVmin = _mm_min_epi16(xVmin, x0);
-				
+
 				//if (max - min < vmax - vmin) { max = vmax, min = vmin; }
 				xMask = _mm_cmpgt_epi16(_mm_sub_epi16(xVmax, xVmin), _mm_sub_epi16(xMax, xMin));
 				xMax  = _mm_blendv_epi8(xMax, xVmax, xMask);
 				xMin  = _mm_blendv_epi8(xMin, xVmin, xMask);
+				
+				//avg = (min + max) >> 1;
+				xAvg  = _mm_add_epi16(xMax, xMin);
+				xAvg  = _mm_srai_epi16(xAvg, 1);
 
 				//if (src->y == max) max += wc * 2;
 				//else max += wc;
 				xMask = _mm_cmpeq_epi16(xY, xMax);
-				xMax  = _mm_add_epi16(xMax, _mm_set1_epi16(bc));
-				xMax  = _mm_add_epi16(xMax, _mm_and_si128(_mm_set1_epi16(bc), xMask));
+				xMax  = _mm_add_epi16(xMax, _mm_set1_epi16(wc));
+				xMax  = _mm_add_epi16(xMax, _mm_and_si128(_mm_set1_epi16(wc), xMask));
 				
 				//if (src->y == min) min -= bc * 2;
 				//else  min -= bc;
 				xMask = _mm_cmpeq_epi16(xY, xMin);
-				xMin  = _mm_sub_epi16(xMin, _mm_set1_epi16(wc));
-				xMin  = _mm_sub_epi16(xMin, _mm_and_si128(_mm_set1_epi16(wc), xMask));
+				xMin  = _mm_sub_epi16(xMin, _mm_set1_epi16(bc));
+				xMin  = _mm_sub_epi16(xMin, _mm_and_si128(_mm_set1_epi16(bc), xMask));
 
-				//avg = (min + max) >> 1;
-				x1    = _mm_add_epi16(xMax, xMin);
-				x1    = _mm_srai_epi16(x1, 1);
 				//dst->y = (std::min)( (std::max)( short( src->y + ((src->y - avg) * str >> 4) ), min ), max );
-				x1    = _mm_sub_epi16(x1, xY);
+				x1    = _mm_sub_epi16(xAvg, xY);
 				x0    = _mm_unpacklo_epi16(x1, x1);
 				x1    = _mm_unpackhi_epi16(x1, x1);
 				x2    = _mm_unpacklo_epi16(_mm_setzero_si128(), _mm_set1_epi16(-1 * str));
@@ -186,7 +187,7 @@ void multi_thread_func_avx(int thread_id, int thread_num, void *param1, void *pa
 	int bc = fp->track[2] * 16, wc = fp->track[3] * 16;
 	//こんなにレジスタは多くないけど、適当に最適化してもらう
 	__m128i x0, x1, x2, x3;
-	__m128i xY, xVmin, xVmax, xMin, xMax, xMask;
+	__m128i xY, xVmin, xVmax, xMin, xMax, xMask, xAvg;
 	const int MASK_INT = 0x40 + 0x08 + 0x01;
 
 	//	スレッド毎の画像を処理する場所を計算する
@@ -248,6 +249,10 @@ void multi_thread_func_avx(int thread_id, int thread_num, void *param1, void *pa
 				xMask = _mm_cmpgt_epi16(_mm_sub_epi16(xVmax, xVmin), _mm_sub_epi16(xMax, xMin));
 				xMax  = _mm_blendv_epi8(xMax, xVmax, xMask);
 				xMin  = _mm_blendv_epi8(xMin, xVmin, xMask);
+				
+				//avg = (min + max) >> 1;
+				xAvg  = _mm_add_epi16(xMax, xMin);
+				xAvg  = _mm_srai_epi16(xAvg, 1);
 
 				//if (src->y == max) max += wc * 2;
 				//else max += wc;
@@ -261,11 +266,8 @@ void multi_thread_func_avx(int thread_id, int thread_num, void *param1, void *pa
 				xMin  = _mm_sub_epi16(xMin, _mm_set1_epi16(bc));
 				xMin  = _mm_sub_epi16(xMin, _mm_and_si128(_mm_set1_epi16(bc), xMask));
 
-				//avg = (min + max) >> 1;
-				x1    = _mm_add_epi16(xMax, xMin);
-				x1    = _mm_srai_epi16(x1, 1);
 				//dst->y = (std::min)( (std::max)( short( src->y + ((src->y - avg) * str >> 4) ), min ), max );
-				x1    = _mm_sub_epi16(x1, xY);
+				x1    = _mm_sub_epi16(xAvg, xY);
 				x0    = _mm_unpacklo_epi16(x1, x1);
 				x1    = _mm_unpackhi_epi16(x1, x1);
 				x2    = _mm_unpacklo_epi16(_mm_setzero_si128(), _mm_set1_epi16(-1 * str));
