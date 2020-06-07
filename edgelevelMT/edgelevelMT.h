@@ -2,7 +2,8 @@
 
 #include <Windows.h>
 
-#define SIMD_DEBUG 1
+#define SIMD_DEBUG 0
+#define ENABLE_PERF_CHECK 0
 
 #define AUF_VERSION      0,0,7,9
 #define AUF_VERSION_STR  "0.7 v9"

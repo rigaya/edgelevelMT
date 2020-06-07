@@ -136,6 +136,7 @@
     <ClInclude Include="edgelevelMT.h" />
     <ClInclude Include="edgelevelMT_simd.h" />
     <ClInclude Include="filter.h" />
+    <ClInclude Include="rgy_perf_checker.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="edgelevelMT.rc">

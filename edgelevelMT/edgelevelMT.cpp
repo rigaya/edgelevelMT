@@ -1,12 +1,20 @@
 ﻿//---------------------------------------------------------------------------------------------
 //      マルチスレッド対応サンプルフィルタ(フィルタプラグイン)  for AviUtl ver0.99a以降
 //---------------------------------------------------------------------------------------------
+#define _CRT_SECURE_NO_WARNINGS
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
 #include <Windows.h>
 #include <tchar.h>
 #include <algorithm>
 #include "filter.h"
 #include "edgelevelMT.h"
+#include "rgy_perf_checker.h"
 
+auto perfCheck = RGYPerfChecker<ENABLE_PERF_CHECK, 1>({ "edgelevel" });
+enum {
+    EDGELEVEL_FUNC,
+};
 
 //---------------------------------------------------------------------
 //      フィルタ構造体定義
@@ -295,10 +303,14 @@ BOOL func_proc(FILTER *fp, FILTER_PROC_INFO *fpip)
 {
     BOOL run = !fp->check[0] | fp->exfunc->is_saving(fpip->editp);
     BOOL align = (((size_t)fpip->ycp_temp | (size_t)fpip->ycp_edit | fpip->max_w) & 0x0F) == 0x00;
+    perfCheck.settime(0);
     //  マルチスレッドでフィルタ処理関数を呼ぶ
     fp->exfunc->exec_multi_thread_func(
         mt_func[run + (align & run)],
         (void *)fp, (void *)fpip);
+    perfCheck.settime(1);
+    perfCheck.setcounter();
+    perfCheck.print("edgeleveMT.csv", 1024);
 
 #if SIMD_DEBUG
     simd_debug(fp, fpip);

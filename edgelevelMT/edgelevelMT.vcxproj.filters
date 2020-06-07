@@ -24,6 +24,9 @@
     <ClInclude Include="edgelevelMT_simd.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
+    <ClInclude Include="rgy_perf_checker.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="edgelevelMT.cpp">
