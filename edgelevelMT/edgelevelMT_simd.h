@@ -16,6 +16,7 @@
 #endif
 
 #define PIXELYC_SIZE 6
+static_assert(sizeof(PIXEL_YC) == PIXELYC_SIZE, "sizeof(PIXEL_YC) == 6");
 
 #define ALIGN16_CONST_ARRAY static const _declspec(align(16))
 
