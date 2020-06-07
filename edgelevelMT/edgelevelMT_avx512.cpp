@@ -114,6 +114,38 @@ static void __forceinline insert_y_yc48(uint8_t *dst, const uint8_t *src, const 
     _mm512_storeu_si512((dst + 128), z2);
 }
 
+static void __forceinline insert_y_yc48(uint8_t *dst, const uint8_t *src, const __m512i &zY, int n) {
+    alignas(64) static const uint16_t shuffle_yc48[] = {
+         0, 11, 22,  1, 12, 23,  2, 13, 24,  3, 14, 25,  4, 15, 26,  5,
+        16, 27,  6, 17, 28,  7, 18, 29,  8, 19, 30,  9, 20, 31, 10, 21
+
+    };
+    __m512i z0 = _mm512_loadu_si512((__m512i *)(src + 0));
+    __m512i z1 = _mm512_loadu_si512((__m512i *)(src + 64));
+    __m512i z2 = _mm512_loadu_si512((__m512i *)(src + 128));
+
+    __m512i z7 = _mm512_permutexvar_epi16(_mm512_loadu_si512((__m512i *)(shuffle_yc48)), zY);
+
+    __mmask32 k1 = 0x92492492u;
+    __mmask32 k0 = k1 >> 1;
+    __mmask32 k2 = k1 >> 2;
+    z0 = _mm512_mask_mov_epi16(z0, k0, z7);
+    z1 = _mm512_mask_mov_epi16(z1, k1, z7);
+    z2 = _mm512_mask_mov_epi16(z2, k2, z7);
+
+    n *= 3;
+
+    __mmask32 kWrite;
+    kWrite = (n >= 32) ? 0xffffffff : (1 << n) - 1;
+    _mm512_mask_storeu_epi16((dst + 0), kWrite, z0);
+    n = std::max(n-32,0);
+    kWrite = (n >= 32) ? 0xffffffff : (1 << n) - 1;
+    _mm512_mask_storeu_epi16((dst + 64), kWrite, z1);
+    n = std::max(n - 32, 0);
+    kWrite = (n >= 32) ? 0xffffffff : (1 << n) - 1;
+    _mm512_mask_storeu_epi16((dst + 128), kWrite, z2);
+}
+
 #pragma warning (push)
 #pragma warning (disable:4127) //warning  C4127: 条件式が定数です。
 template<int shift>
@@ -225,8 +257,8 @@ static __forceinline void multi_thread_func_avx512_line(BYTE *dst, BYTE *src, in
     const __m512i& zThreshold, const __m512i& zStrength, const __m512i& zWc, const __m512i& zBc) {
     __m512i zSrc0 = get_previous_2_y_pixels(src);
     __m512i zSrc1 = load_y_from_yc48<avx512vbmi>(src);
-    const BYTE *src_fin = src + w * PIXELYC_SIZE;
-    for ( ; src < src_fin; src += 192, dst += 192) {
+    int x = w;
+    for (; x > 32; x -= 32, src += 192, dst += 192) {
         //周辺近傍の最大と最小を縦方向・横方向に求める
         __m512i zSrc1YM2 = load_y_from_yc48<avx512vbmi>(src + (-2*max_w) * PIXELYC_SIZE);
         __m512i zSrc1YM1 = load_y_from_yc48<avx512vbmi>(src + (-1*max_w) * PIXELYC_SIZE);
@@ -240,6 +272,16 @@ static __forceinline void multi_thread_func_avx512_line(BYTE *dst, BYTE *src, in
 
         insert_y_yc48(dst, src, zY);
     }
+
+    __m512i zSrc1YM2 = load_y_from_yc48<avx512vbmi>(src + (-2*max_w) * PIXELYC_SIZE);
+    __m512i zSrc1YM1 = load_y_from_yc48<avx512vbmi>(src + (-1*max_w) * PIXELYC_SIZE);
+    __m512i zSrc1YP1 = load_y_from_yc48<avx512vbmi>(src + ( 1*max_w) * PIXELYC_SIZE);
+    __m512i zSrc1YP2 = load_y_from_yc48<avx512vbmi>(src + ( 2*max_w) * PIXELYC_SIZE);
+    __m512i zSrc2    = load_y_from_yc48<avx512vbmi>(src +         32 * PIXELYC_SIZE);
+
+    __m512i zY = edgelevel_avx512_32(zSrc1YM2, zSrc1YM1, zSrc0, zSrc1, zSrc2, zSrc1YP1, zSrc1YP2, zThreshold, zStrength, zWc, zBc);
+
+    insert_y_yc48(dst, src, zY, x);
 }
 
 void multi_thread_func_avx512(int thread_id, int thread_num, void *param1, void *param2) {
@@ -282,16 +324,17 @@ void multi_thread_func_avx512(int thread_id, int thread_num, void *param1, void 
             }
             multi_thread_func_avx512_line<false>(dst, src, process_pixel, max_w, zThreshold, zStrength, zWc, zBc);
 
-            __m64 m0 = *(__m64 *)(line_src + 0);
-            DWORD d0 = *(DWORD *)(line_src + 8);
-            *(__m64 *)(line_dst + 0) = m0;
-            *(DWORD *)(line_dst + 8) = d0;
-            __m128i x1 = _mm_loadu_si128((__m128i *)(line_src + w * PIXELYC_SIZE - 16));
-            _mm_storeu_si128((__m128i *)(line_dst + w * PIXELYC_SIZE - 12), _mm_srli_si128(x1, 4));
+            *(DWORD *)(line_dst + 0) = *(DWORD *)(line_src + 0);
+            *(DWORD *)(line_dst + 4) = *(DWORD *)(line_src + 4);
+            *(DWORD *)(line_dst + 8) = *(DWORD *)(line_src + 8);
+            dst = line_dst + w * PIXELYC_SIZE - 12;
+            src = line_src + w * PIXELYC_SIZE - 12;
+            *(DWORD *)(dst + 0) = *(DWORD *)(src + 0);
+            *(DWORD *)(dst + 4) = *(DWORD *)(src + 4);
+            *(DWORD *)(dst + 8) = *(DWORD *)(src + 8);
         } else {
             memcpy_avx512<false>(line_dst, line_src, w * PIXELYC_SIZE);
         }
     }
     _mm256_zeroupper();
-    _mm_empty();
 }
