@@ -5,11 +5,11 @@
 #define SIMD_DEBUG 0
 #define ENABLE_PERF_CHECK 0
 
-#define AUF_VERSION      0,0,7,9
-#define AUF_VERSION_STR  "0.7 v9"
+#define AUF_VERSION      0,0,7,10
+#define AUF_VERSION_STR  "0.7 v10"
 #define AUF_NAME         "edgelevelMT.auf"
 #define AUF_FULL_NAME    "エッジレベル調整 MT ver 0.7"
-#define AUF_VERSION_NAME "エッジレベル調整 MT ver 0.7 v9"
+#define AUF_VERSION_NAME "エッジレベル調整 MT ver 0.7 v10"
 #define AUF_VERSION_INFO AUF_VERSION_NAME
 
 #ifdef DEBUG
