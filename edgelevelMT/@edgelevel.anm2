@@ -1,0 +1,129 @@
+@エッジレベル調整
+--label:加工
+--track0:特性,-31,31,10
+--track1:閾値,0,255,16
+--track2:黒補正,0,31,0
+--track3:白補正,0,31,0
+--check0:判定表示,0
+
+--[[pixelshader@psmain:
+Texture2D texture0 : register(t0);
+cbuffer constant0 : register(b0) {
+    float strVal;      // 特性 (そのまま、>>4 相当はシェーダ内で /16)
+    float thrs;        // 閾値 (0..1 正規化)
+    float bc;          // 黒補正 (0..1 正規化)
+    float wc;          // 白補正 (0..1 正規化)
+    float showMask;    // 判定表示 0/1
+    float width;       // 画像幅
+    float height;      // 画像高
+};
+
+float4 load(int2 pos)
+{
+    return texture0.Load(int3(pos.x, pos.y, 0));
+}
+
+int2 get_res()
+{
+    uint w_src_u, h_src_u;
+    texture0.GetDimensions(w_src_u, h_src_u);
+    return int2(w_src_u, h_src_u);
+}
+
+static const float3 LUMA = float3(0.299, 0.587, 0.114);
+
+float lumaOf(float3 rgb) {
+    return dot(rgb, LUMA);
+}
+
+float lumaAt(int2 p, int w, int h) {
+    p.x = clamp(p.x, 0, w-1);
+    p.y = clamp(p.y, 0, h-1);
+    return lumaOf(load(p).rgb);
+}
+
+float4 psmain(float4 input : SV_Position) : SV_Target {
+    int2 res = get_res();
+    int w = (int)res.x;
+    int h = (int)res.y;
+    int2 pos = int2(input.xy);
+    pos.x = clamp(pos.x, 0, w-1);
+    pos.y = clamp(pos.y, 0, h-1);
+
+    float4 src = load(pos);
+    
+    float3 srcRGB = src.rgb;
+    float  srcY   = lumaOf(srcRGB);
+
+    // 近傍5点 (±2 を含む) の水平・垂直の min/max
+    float hmin = lumaAt(int2(pos.x-2, pos.y), w, h);
+    float hmax = hmin;
+    float vmin = lumaAt(int2(pos.x, pos.y-2), w, h);
+    float vmax = vmin;
+
+    [unroll]
+    for (int ih = -1; ih <= 2; ih++) {
+        float y = lumaAt(int2(pos.x + ih, pos.y), w, h);
+        hmin = min(hmin, y);
+        hmax = max(hmax, y);
+    }
+    [unroll]
+    for (int iv = -1; iv <= 2; iv++) {
+        float y = lumaAt(int2(pos.x, pos.y + iv), w, h);
+        vmin = min(vmin, y);
+        vmax = max(vmax, y);
+    }
+
+    float rmin = hmin;
+    float rmax = hmax;
+    if ((hmax - hmin) < (vmax - vmin)) {
+        rmin = vmin;
+        rmax = vmax;
+    }
+
+    float range = rmax - rmin;
+
+    float3 outRGB = srcRGB;
+    if (range > thrs) {
+        float avg  = (rmin + rmax) * 0.5;
+        float min2 = rmin - bc; // 常に bc 分拡張
+        float max2 = rmax + wc; // 常に wc 分拡張
+
+        const float eps = 1.0 / 1023.0;
+        if (abs(srcY - rmin) <= eps) min2 -= bc;
+        if (abs(srcY - rmax) <= eps) max2 += wc;
+
+        float gain = strVal * 0.0625; // >>4 相当
+        float yOut = clamp(srcY + (srcY - avg) * gain, min2, max2);
+        float d = yOut - srcY;
+        float k = 1.0 / dot(LUMA, LUMA);
+        outRGB = saturate(srcRGB + d * LUMA * k);
+    }
+
+    if (showMask > 0.5) {
+        float edge = step(thrs, range);
+        float3 overlay = lerp(outRGB, float3(1.0, 0.0, 0.0), 0.7 * edge);
+        return float4(overlay, src.a);
+    }
+
+    return float4(outRGB, src.a);
+}
+]]
+
+
+-- 8bit 正規化でパラメータを調整
+local w, h = obj.w, obj.h;
+local str  = obj.track0
+local th   = obj.track1*8/255
+local bc   = obj.track2*16/255
+local wc   = obj.track3*16/255
+local msk  = 0
+if (obj.check0) then msk = 1 end
+
+if (w < 1 or h < 1) then
+    obj.load("plane",0,0)
+else
+    obj.setoption("drawtarget","tempbuffer",w,h)
+    obj.pixelshader("psmain","tempbuffer","object",{str,th,bc,wc,msk})
+    obj.load("tempbuffer")
+end
